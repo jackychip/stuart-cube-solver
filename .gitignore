@@ -1,5 +1,6 @@
 # Python
 __pycache__/
+core/__pycache__
 *.py[cod]
 *.egg-info/
 .pytest_cache/
