@@ -114,6 +114,14 @@ class Arm:
             self.robot.send_action(action)
             time.sleep(1 / hz)
 
+    def torque_off(self):
+        self.robot.bus.disable_torque()
+
+    def torque_on(self):
+        present = self.robot.bus.sync_read("Present_Position")
+        self.robot.bus.sync_write("Goal_Position", present)
+        self.robot.bus.enable_torque()
+
     def disconnect(self):
         """
         
