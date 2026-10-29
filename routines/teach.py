@@ -3,17 +3,40 @@ import os
 
 BODY = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll"]
 
+ROTATION_HINTS = {
+    "x":  "front face goes UP to the top",
+    "x'": "front face goes DOWN to the bottom",
+    "y":  "front face goes to the LEFT",
+    "y'": "front face goes to the RIGHT",
+    "z":  "top face goes to the RIGHT",
+    "z'": "top face goes to the LEFT",
+}
+
+def load_poses(path="poses.json"):
+    # missing or empty file = no poses yet
+    if not os.path.exists(path) or os.path.getsize(path) == 0:
+        return {}
+    with open(path) as f:
+        return json.load(f)
+
+def save_all(poses, path="poses.json"):
+    temp_path = path + ".tmp"
+    with open(temp_path, "w") as f:
+        json.dump(poses, f, indent=2)
+    os.replace(temp_path, path)     # swaps in the new file only after a successful write
 
 def save_pose(name, values, path="poses.json"):
-    poses = {}
-    if os.path.exists(path):
-        with open(path) as f:
-            poses = json.load(f)
+    poses = load_poses(path)
     poses[name] = values
-    with open(path, "w") as f:
-        json.dump(poses, f, indent=2)
+    save_all(poses, path)
     print("saved", name, values)
 
+def teach_pose(arm, name, path="poses.json"):
+    input("support the arm, then press enter to release torque")
+    arm.torque_off()
+    input("move the arm to '" + name + "', then press enter to save")
+    arm.torque_on()
+    save_pose(name, arm.read(), path)
 
 def teach_turn(arm, direction, path="poses.json"):
     poses = load_poses(path)
@@ -47,7 +70,7 @@ def teach_turn(arm, direction, path="poses.json"):
     arm.move_to({"gripper": open_value}, duration=0.3)
     input("support the arm, then press enter to release the arm joints")
     arm.torque_off(BODY)
-    input("slide 45 degrees away from the fixed jaw (don't lift), then press enter")
+    input("slide 45 degrees (relative to shoulder_pan) away from the fixed jaw (don't lift), then press enter")
     arm.torque_on(BODY)
     save_pose("retreat" + s, arm.read(), path)
 
@@ -57,23 +80,69 @@ def teach_turn(arm, direction, path="poses.json"):
     arm.move_to(lift, duration=0.5)
     arm.move_to(poses["pre_grasp"], duration=0.8)
 
-def teach_pose(arm, name, path="poses.json"):
-    poses = {}
-    if os.path.exists(path):
-        with open(path) as f:
-            poses = json.load(f)
+def record_waypoints(arm, label, start_roll):
+    # arm joints torque off, gripper locked, enter at each key point
+    input("support the arm, then press enter to release the arm joints")
+    arm.torque_off(BODY)
 
+    print(label)
+    print("press enter at each key point. type 'd' + enter when done.")
+    waypoints = []
+
+    while True:
+        text = input("  waypoint " + str(len(waypoints) + 1) + ": ").strip()
+        if text == "d":
+            if len(waypoints) == 0:
+                print("  need at least one waypoint")
+                continue
+            break
+        waypoints.append(arm.read())
+
+    arm.torque_on(BODY)
+
+    # check for the wrist wrapping past +-180 between points (it would spin the long way on replay)
+    previous_roll = start_roll
+    for i in range(len(waypoints)):
+        jump = abs(waypoints[i]["wrist_roll"] - previous_roll)
+        if jump > 180:
+            print("warning: wrist_roll jumps", round(jump), "degrees at waypoint", i + 1,
+                  "- it crossed the wrap point. re-teach this rotation.")
+        previous_roll = waypoints[i]["wrist_roll"]
+
+    return waypoints
+
+def teach_rotation(arm, name, path="poses.json"):
+    poses = load_poses(path)
+    print("teaching rotation", name, "-", ROTATION_HINTS[name])
+
+    # pre-rotation pose: where the push starts, with the gripper opening you want for pushing
     input("support the arm, then press enter to release torque")
     arm.torque_off()
-    input("move the arm to '" + name + "', then press enter to save")
+    input("move to the PRE-ROTATION pose (set the gripper opening too), then press enter")
     arm.torque_on()
+    pre = arm.read()
 
-    poses[name] = arm.read()
-    with open(path, "w") as f:
-        json.dump(poses, f, indent=2)
+    # push: demonstrate pushing the cube over against the holder
+    push = record_waypoints(
+        arm,
+        "push the cube through the rotation. the LAST point should be the cube fully seated.",
+        pre["wrist_roll"],
+    )
 
-    print("saved ", name, poses[name])
+    # exit: back off so the gripper doesn't drag the cube back
+    exit_path = record_waypoints(
+        arm,
+        "back the gripper away from the cube. the LAST point should be clear and safe.",
+        push[-1]["wrist_roll"],
+    )
 
-def load_poses(path="poses.json"):
-    with open(path) as f:
-        return json.load(f)
+    poses = load_poses(path)
+    if "rotations" not in poses:
+        poses["rotations"] = {}
+    poses["rotations"][name] = {
+        "pre": pre,
+        "push": push,
+        "exit": exit_path,
+    }
+    save_all(poses, path)
+    print("saved rotation", name, "-", len(push), "push points,", len(exit_path), "exit points")
