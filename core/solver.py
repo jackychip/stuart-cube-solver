@@ -25,7 +25,7 @@ for name, rotation in BASE_ROTATIONS.items():
     ROTATIONS[name + "'"] = inverse(rotation)
 
 # the rotations the robot can do (a 180 is planned as two 90s, e.g. "x x")
-ROBOT_ROTATIONS = ["x", "x'", "z", "z'"]
+ROBOT_ROTATIONS = ["x'", "y", "y'"]
 
 class Orientation:
     # which face sits at each position (denoted by center on each face)

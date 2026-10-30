@@ -7,8 +7,7 @@ arm = Arm(ARM_PORT, ARM_ID)
 
 TEACH_TURNS = False
 TEACH_ROT = True
-ROTATION = "x"
-TEACH_ROTATIONS = ["x", "x'", "z", "z'"]
+ROTATION = "y"
 
 try:
     if TEACH_TURNS:

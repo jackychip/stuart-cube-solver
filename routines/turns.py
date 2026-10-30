@@ -17,7 +17,7 @@ def turn_u(arm, poses, direction=1, overdrive=5, squeeze=5, twist_duration=1.0):
 
     # approach
     arm.move_to(poses["pre_grasp"], duration=1.0)
-    arm.move_to(poses["grasp"], duration=0.3)
+    arm.move_to(poses["grasp"], duration=0.5)
 
     # grip
     arm.move_to({"gripper": closed_value}, duration=0.5)

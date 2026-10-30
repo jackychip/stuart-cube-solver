@@ -3,6 +3,11 @@ from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
 
 JOINTS = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
 
+def ease(t):
+            # t goes 0 -> 1 in a straight line; the result goes 0 -> 1 smoothly,
+            # starting and ending with zero speed and zero acceleration
+            return 10 * t**3 - 15 * t**4 + 6 * t**5
+
 class Arm:
     """
     
@@ -35,6 +40,7 @@ class Arm:
             port=port,
             id=robot_id,
             use_degrees=True,
+            position_p_coefficient=28,
         )
         self.robot = SO101Follower(config)
         self.robot.connect()
@@ -101,7 +107,7 @@ class Arm:
         start = self.read()
 
         for i in range(1, steps + 1):
-            t = i/steps
+            t = ease(i / steps) 
 
             action = {}
 
@@ -111,6 +117,45 @@ class Arm:
                 key = joint + ".pos"
                 action[key] = current_goal
 
+            self.robot.send_action(action)
+            time.sleep(1 / hz)
+
+    def move_through(self, points, duration):
+        # one smooth move through every point in order, only easing at the very start and end
+        hz = 50
+        start = self.read()
+        path = [start] + points
+        joints = list(points[0].keys())
+
+        # length of each segment = biggest joint change in it,
+        # so longer segments get more of the time
+        lengths = []
+        for i in range(len(path) - 1):
+            biggest = 0
+            for joint in joints:
+                change = abs(path[i + 1][joint] - path[i][joint])
+                if change > biggest:
+                    biggest = change
+            lengths.append(max(biggest, 0.001))     # avoid dividing by zero
+        total = sum(lengths)
+
+        steps = max(1, int(duration * hz))
+        for k in range(1, steps + 1):
+            # how far along the whole path we are, eased
+            distance = ease(k / steps) * total
+
+            # find which segment that distance falls in
+            segment = 0
+            while segment < len(lengths) - 1 and distance > lengths[segment]:
+                distance -= lengths[segment]
+                segment += 1
+            fraction = min(distance / lengths[segment], 1.0)
+
+            action = {}
+            for joint in joints:
+                a = path[segment][joint]
+                b = path[segment + 1][joint]
+                action[joint + ".pos"] = a + fraction * (b - a)
             self.robot.send_action(action)
             time.sleep(1 / hz)
 

@@ -111,29 +111,57 @@ def record_waypoints(arm, label, start_roll):
 
     return waypoints
 
+ROTATION_HINTS = {
+    "x'": "top face comes to the FRONT",
+    "y":  "front face goes to the LEFT",
+    "y'": "front face goes to the RIGHT",
+}
+
+
 def teach_rotation(arm, name, path="poses.json"):
     poses = load_poses(path)
+    contact_value = poses["grasp_closed"]["gripper"]
     print("teaching rotation", name, "-", ROTATION_HINTS[name])
 
-    # pre-rotation pose: where the push starts, with the gripper opening you want for pushing
+    # pre-rotation pose: hovering above the cube, gripper open
     input("support the arm, then press enter to release torque")
     arm.torque_off()
-    input("move to the PRE-ROTATION pose (set the gripper opening too), then press enter")
+    input("move to the PRE-ROTATION pose (hovering, gripper open), then press enter")
     arm.torque_on()
     pre = arm.read()
 
-    # push: demonstrate pushing the cube over against the holder
-    push = record_waypoints(
+    # grasp pose: jaws around the cube, still open
+    input("press enter to release torque")
+    arm.torque_off()
+    input("move down to the GRASP pose (jaws around the cube, still open), then press enter")
+    arm.torque_on()
+    grasp = arm.read()
+
+    # close on the cube, squeezing past contact so the grip holds while carrying
+    squeeze = 7
+    open_value = grasp["gripper"]
+    if contact_value < open_value:
+        closed_value = contact_value - squeeze
+    else:
+        closed_value = contact_value + squeeze
+    arm.move_to({"gripper": closed_value}, duration=0.5)
+
+    # carry: lift, rotate, set back down, all while gripped
+    carry = record_waypoints(
         arm,
-        "push the cube through the rotation. the LAST point should be the cube fully seated.",
-        pre["wrist_roll"],
+        "lift the cube, rotate it, and set it back in the holder. "
+        "the LAST point should be the cube fully seated, still gripped.",
+        grasp["wrist_roll"],
     )
 
-    # exit: back off so the gripper doesn't drag the cube back
+    # release
+    arm.move_to({"gripper": grasp["gripper"]}, duration=0.3)
+
+    # exit: move clear without disturbing the cube
     exit_path = record_waypoints(
         arm,
-        "back the gripper away from the cube. the LAST point should be clear and safe.",
-        push[-1]["wrist_roll"],
+        "move the gripper up and away from the cube. the LAST point should be clear and safe.",
+        carry[-1]["wrist_roll"],
     )
 
     poses = load_poses(path)
@@ -141,8 +169,9 @@ def teach_rotation(arm, name, path="poses.json"):
         poses["rotations"] = {}
     poses["rotations"][name] = {
         "pre": pre,
-        "push": push,
+        "grasp": grasp,
+        "carry": carry,
         "exit": exit_path,
     }
     save_all(poses, path)
-    print("saved rotation", name, "-", len(push), "push points,", len(exit_path), "exit points")
+    print("saved rotation", name, "-", len(carry), "carry points,", len(exit_path), "exit points")
