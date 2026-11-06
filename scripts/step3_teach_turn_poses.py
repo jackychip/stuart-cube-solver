@@ -1,25 +1,33 @@
-from config import ARM_PORT, ARM_ID
+from config import ARM_PORT, ARM_ID, LEADER_PORT, LEADER_ID
 from core.arm import Arm
-from routines.teach import teach_pose, teach_turn, teach_rotation, load_poses
-from routines.rotations import rotate_cube
+from core.leader import Leader, Mirror
+from routines.teach_leader import teach_shared, teach_turn, teach_rotation
+
+TEACH_SHARED = False         # hover, turn_grasp, grip_closed
+TEACH_TURNS = False         # turned + retreat, both directions
+TEACH_ROT = True
+ROTATION = "y'"             # one of: "x'", "y", "y'"
 
 arm = Arm(ARM_PORT, ARM_ID)
-
-TEACH_TURNS = False
-TEACH_ROT = True
-ROTATION = "y"
+leader = Leader(LEADER_PORT, LEADER_ID)
+mirror = Mirror(arm, leader)
 
 try:
+    input("hold the leader roughly in the follower's pose, then press enter to start mirroring")
+    mirror.start()
+
+    if TEACH_SHARED:
+        teach_shared(mirror)
+
     if TEACH_TURNS:
-        teach_pose(arm, "pre_grasp")
-        teach_pose(arm, "grasp")
-        teach_pose(arm, "grasp_closed")
-        teach_turn(arm, direction=1)
-        teach_turn(arm, direction=-1)
+        teach_turn(mirror, direction=1)
+        teach_turn(mirror, direction=-1)
 
     if TEACH_ROT:
-        teach_rotation(arm, ROTATION)
+        teach_rotation(mirror, ROTATION)
 
 finally:
-    input("support the arm, then press enter to disconnect")
+    mirror.stop()
+    leader.disconnect()
+    input("support the follower, then press enter to disconnect")
     arm.disconnect()

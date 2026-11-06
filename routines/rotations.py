@@ -1,35 +1,38 @@
-def rotate_cube(arm, poses, name, squeeze=7, step_duration=0.8):
-    rotation = poses["rotations"][name]
+from routines.teach import closed_value
 
-    open_value = rotation["grasp"]["gripper"]
-    contact_value = poses["grasp_closed"]["gripper"]
-    if contact_value < open_value:
-        closed_value = contact_value - squeeze
-    else:
-        closed_value = contact_value + squeeze
 
-    # approach
-    arm.move_to(rotation["pre"], duration=1.0)
-    arm.move_to(rotation["grasp"], duration=0.5)
-
-    # grip
-    arm.move_to({"gripper": closed_value}, duration=0.5)
-
-    # lift, rotate, set down (gripper left out, so it keeps squeezing)
-    carry = []
-    for point in rotation["carry"]:
+def follow(arm, points, step_duration):
+    # one smooth move through taught waypoints, leaving the gripper wherever it already is
+    targets = []
+    for point in points:
         target = dict(point)
         del target["gripper"]
-        carry.append(target)
-    arm.move_through(carry, duration=step_duration * len(carry))
+        targets.append(target)
+    arm.move_through(targets, duration=step_duration * len(targets))
+
+
+def rotate_cube(arm, poses, name, squeeze=5, step_duration=0.8):
+    rotation = poses["rotations"][name]
+    open_value = poses["hover"]["gripper"]
+    closed = rotation["grip"]
+
+    # start at the shared hover pose
+    arm.move_to(poses["hover"], duration=1.0)
+
+    # approach the cube, gripper open
+    follow(arm, rotation["approach"], step_duration)
+
+    # grip
+    arm.move_to({"gripper": closed}, duration=0.5)
+
+    # lift, rotate, set down (gripper keeps squeezing)
+    follow(arm, rotation["carry"], step_duration)
 
     # release
     arm.move_to({"gripper": open_value}, duration=0.3)
 
-    # move clear (gripper left out, it's already open)
-    exit_points = []
-    for point in rotation["exit"]:
-        target = dict(point)
-        del target["gripper"]
-        exit_points.append(target)
-    arm.move_through(exit_points, duration=step_duration * len(exit_points))
+    # move clear
+    follow(arm, rotation["exit"], step_duration)
+
+    # finish at the shared hover pose
+    arm.move_to(poses["hover"], duration=0.8)

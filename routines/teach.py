@@ -2,15 +2,14 @@ import json
 import os
 
 BODY = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll"]
+SQUEEZE = 5
 
 ROTATION_HINTS = {
-    "x":  "front face goes UP to the top",
-    "x'": "front face goes DOWN to the bottom",
+    "x'": "top face comes to the FRONT",
     "y":  "front face goes to the LEFT",
     "y'": "front face goes to the RIGHT",
-    "z":  "top face goes to the RIGHT",
-    "z'": "top face goes to the LEFT",
 }
+
 
 def load_poses(path="poses.json"):
     # missing or empty file = no poses yet
@@ -19,17 +18,37 @@ def load_poses(path="poses.json"):
     with open(path) as f:
         return json.load(f)
 
+
 def save_all(poses, path="poses.json"):
     temp_path = path + ".tmp"
     with open(temp_path, "w") as f:
         json.dump(poses, f, indent=2)
     os.replace(temp_path, path)     # swaps in the new file only after a successful write
 
+
 def save_pose(name, values, path="poses.json"):
     poses = load_poses(path)
     poses[name] = values
     save_all(poses, path)
     print("saved", name, values)
+
+
+def closed_value(poses, open_value, squeeze=SQUEEZE):
+    # gripper target past the contact point, so the grip keeps pushing
+    contact_value = poses["grip_closed"]["gripper"]
+    if contact_value < open_value:
+        return contact_value - squeeze
+    return contact_value + squeeze
+
+
+def biggest_joint_difference(a, b):
+    biggest = 0
+    for joint in BODY:
+        difference = abs(a[joint] - b[joint])
+        if difference > biggest:
+            biggest = difference
+    return biggest
+
 
 def teach_pose(arm, name, path="poses.json"):
     input("support the arm, then press enter to release torque")
@@ -38,6 +57,44 @@ def teach_pose(arm, name, path="poses.json"):
     arm.torque_on()
     save_pose(name, arm.read(), path)
 
+
+def teach_below_hover(arm, name, path="poses.json"):
+    # a grasp pose must sit straight below hover, so approaches are a pure vertical drop
+    poses = load_poses(path)
+    arm.move_to(poses["hover"], duration=1.0)
+
+    input("support the arm, then press enter to release torque")
+    arm.torque_off()
+    input("lower STRAIGHT DOWN to '" + name + "' (no sideways shift, no wrist roll), then press enter")
+    arm.torque_on()
+    pose = arm.read()
+
+    for joint in ["shoulder_pan", "wrist_roll"]:
+        difference = abs(pose[joint] - poses["hover"][joint])
+        if difference > 3:
+            print("warning:", joint, "moved", round(difference, 1),
+                  "degrees from hover - this grasp isn't straight below it")
+
+    save_pose(name, pose, path)
+    arm.move_to(poses["hover"], duration=0.8)
+
+
+def teach_grip_width(arm, path="poses.json"):
+    # close the jaws by hand onto the cube; only the gripper value is used
+    poses = load_poses(path)
+    arm.move_to(poses["hover"], duration=1.0)
+    arm.move_to(poses["turn_grasp"], duration=0.5)
+
+    input("press enter to release the gripper only (arm keeps holding)")
+    arm.torque_off(["gripper"])
+    input("close the jaws by hand until they just touch the cube, then press enter")
+    arm.torque_on(["gripper"])
+    save_pose("grip_closed", arm.read(), path)
+
+    arm.move_to({"gripper": poses["turn_grasp"]["gripper"]}, duration=0.3)
+    arm.move_to(poses["hover"], duration=0.5)
+
+
 def teach_turn(arm, direction, path="poses.json"):
     poses = load_poses(path)
     if direction == 1:
@@ -45,24 +102,24 @@ def teach_turn(arm, direction, path="poses.json"):
     else:
         s = "_neg"
 
-    open_value = poses["grasp"]["gripper"]
-    contact_value = poses["grasp_closed"]["gripper"]
+    open_value = poses["turn_grasp"]["gripper"]
+    contact_value = poses["grip_closed"]["gripper"]
 
     # approach and grip, same as a real turn
-    arm.move_to(poses["pre_grasp"], duration=1.0)
-    arm.move_to(poses["grasp"], duration=0.5)
+    arm.move_to(poses["hover"], duration=1.0)
+    arm.move_to(poses["turn_grasp"], duration=0.5)
     arm.move_to({"gripper": contact_value}, duration=0.5)
 
     # turned pose: arm limp, gripper still holding the layer
     input("support the arm, then press enter to release the arm joints (gripper keeps holding)")
     arm.torque_off(BODY)
-    input("turn the top layer 90 degrees by moving the arm, then press enter")
+    input("turn the top two layers 90 degrees by moving the arm, then press enter")
     arm.torque_on(BODY)
     turned = arm.read()
     save_pose("turned" + s, turned, path)
 
     # check the turn went the way this direction expects
-    roll_change = turned["wrist_roll"] - poses["grasp"]["wrist_roll"]
+    roll_change = turned["wrist_roll"] - poses["turn_grasp"]["wrist_roll"]
     if roll_change * direction < 0:
         print("warning: wrist_roll went the opposite way from direction", direction)
 
@@ -70,25 +127,26 @@ def teach_turn(arm, direction, path="poses.json"):
     arm.move_to({"gripper": open_value}, duration=0.3)
     input("support the arm, then press enter to release the arm joints")
     arm.torque_off(BODY)
-    input("slide 45 degrees (relative to shoulder_pan) away from the fixed jaw (don't lift), then press enter")
+    input("slide 2-4 mm away from the fixed jaw (don't lift), then press enter")
     arm.torque_on(BODY)
     save_pose("retreat" + s, arm.read(), path)
 
     # leave: straight up, unroll in the air
-    lift = dict(poses["pre_grasp"])
+    poses = load_poses(path)
+    lift = dict(poses["hover"])
     lift["wrist_roll"] = arm.read()["wrist_roll"]
     arm.move_to(lift, duration=0.5)
-    arm.move_to(poses["pre_grasp"], duration=0.8)
+    arm.move_to(poses["hover"], duration=0.8)
+
 
 def record_waypoints(arm, label, start_roll):
-    # arm joints torque off, gripper locked, enter at each key point
-    input("support the arm, then press enter to release the arm joints")
+    # arm joints limp, gripper stays locked; press enter at each key point
+    input("support the arm, then press enter to release the arm joints (gripper stays locked)")
     arm.torque_off(BODY)
 
     print(label)
     print("press enter at each key point. type 'd' + enter when done.")
     waypoints = []
-
     while True:
         text = input("  waypoint " + str(len(waypoints) + 1) + ": ").strip()
         if text == "d":
@@ -111,67 +169,65 @@ def record_waypoints(arm, label, start_roll):
 
     return waypoints
 
-ROTATION_HINTS = {
-    "x'": "top face comes to the FRONT",
-    "y":  "front face goes to the LEFT",
-    "y'": "front face goes to the RIGHT",
-}
-
 
 def teach_rotation(arm, name, path="poses.json"):
     poses = load_poses(path)
-    contact_value = poses["grasp_closed"]["gripper"]
+    hover = poses["hover"]
+    open_value = hover["gripper"]
     print("teaching rotation", name, "-", ROTATION_HINTS[name])
 
-    # pre-rotation pose: hovering above the cube, gripper open
-    input("support the arm, then press enter to release torque")
-    arm.torque_off()
-    input("move to the PRE-ROTATION pose (hovering, gripper open), then press enter")
-    arm.torque_on()
-    pre = arm.read()
+    arm.move_to(hover, duration=1.0)
 
-    # grasp pose: jaws around the cube, still open
-    input("press enter to release torque")
-    arm.torque_off()
-    input("move down to the GRASP pose (jaws around the cube, still open), then press enter")
-    arm.torque_on()
-    grasp = arm.read()
+    # approach: from hover down to the grasp, gripper open
+    approach = record_waypoints(
+        arm,
+        "move from hover to the grasp, gripper open. roll the wrist UP HERE in the air first, "
+        "then go straight down. the LAST point should be the jaws around the cube, ready to grip.",
+        hover["wrist_roll"],
+    )
 
-    # close on the cube, squeezing past contact so the grip holds while carrying
-    squeeze = 7
-    open_value = grasp["gripper"]
-    if contact_value < open_value:
-        closed_value = contact_value - squeeze
-    else:
-        closed_value = contact_value + squeeze
-    arm.move_to({"gripper": closed_value}, duration=0.5)
+    # grip, squeezing like a real rotation
+    arm.move_to({"gripper": closed_value(poses, open_value)}, duration=0.5)
 
     # carry: lift, rotate, set back down, all while gripped
     carry = record_waypoints(
         arm,
         "lift the cube, rotate it, and set it back in the holder. "
         "the LAST point should be the cube fully seated, still gripped.",
-        grasp["wrist_roll"],
+        approach[-1]["wrist_roll"],
     )
 
     # release
-    arm.move_to({"gripper": grasp["gripper"]}, duration=0.3)
+    arm.move_to({"gripper": open_value}, duration=0.3)
 
-    # exit: move clear without disturbing the cube
+    # exit: clear the cube, then end up near hover
     exit_path = record_waypoints(
         arm,
-        "move the gripper up and away from the cube. the LAST point should be clear and safe.",
+        "move clear of the cube. FIRST move away along the jaws' opening "
+        "(straight up if gripping from the top) until the jaws clear the cube, "
+        "THEN straighten the gripper and rise to about hover height above the cube. "
+        "the LAST point should be close to hover.",
         carry[-1]["wrist_roll"],
     )
+
+    # the code moves hover -> first approach point and last exit point -> hover on its own
+    if biggest_joint_difference(approach[0], hover) > 20:
+        print("warning: first approach point is far from hover."
+              " add a waypoint closer to hover, or the first move may arc into the cube.")
+    if biggest_joint_difference(exit_path[-1], hover) > 20:
+        print("warning: last exit point is far from hover."
+              " add a waypoint closer to hover, or the final move may arc into the cube.")
 
     poses = load_poses(path)
     if "rotations" not in poses:
         poses["rotations"] = {}
     poses["rotations"][name] = {
-        "pre": pre,
-        "grasp": grasp,
+        "approach": approach,
         "carry": carry,
         "exit": exit_path,
     }
     save_all(poses, path)
-    print("saved rotation", name, "-", len(carry), "carry points,", len(exit_path), "exit points")
+    print("saved rotation", name, "-", len(approach), "approach,", len(carry), "carry,",
+          len(exit_path), "exit points")
+
+    arm.move_to(poses["hover"], duration=1.0)

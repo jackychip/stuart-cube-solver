@@ -3,7 +3,7 @@ from core.arm import Arm
 from routines.teach import load_poses
 from routines.rotations import rotate_cube
 
-ROTATION = "y'"          # which rotation to test
+ROTATION = "y"          # which rotation to test
 
 arm = Arm(ARM_PORT, ARM_ID)
 
