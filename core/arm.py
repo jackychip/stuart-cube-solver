@@ -159,45 +159,6 @@ class Arm:
             self.robot.send_action(action)
             time.sleep(1 / hz)
 
-    def move_through(self, points, duration):
-        # one smooth move through every point in order, only easing at the very start and end
-        hz = 50
-        start = self.read()
-        path = [start] + points
-        joints = list(points[0].keys())
-
-        # length of each segment = biggest joint change in it,
-        # so longer segments get more of the time
-        lengths = []
-        for i in range(len(path) - 1):
-            biggest = 0
-            for joint in joints:
-                change = abs(path[i + 1][joint] - path[i][joint])
-                if change > biggest:
-                    biggest = change
-            lengths.append(max(biggest, 0.001))     # avoid dividing by zero
-        total = sum(lengths)
-
-        steps = max(1, int(duration * hz))
-        for k in range(1, steps + 1):
-            # how far along the whole path we are, eased
-            distance = ease(k / steps) * total
-
-            # find which segment that distance falls in
-            segment = 0
-            while segment < len(lengths) - 1 and distance > lengths[segment]:
-                distance -= lengths[segment]
-                segment += 1
-            fraction = min(distance / lengths[segment], 1.0)
-
-            action = {}
-            for joint in joints:
-                a = path[segment][joint]
-                b = path[segment + 1][joint]
-                action[joint + ".pos"] = a + fraction * (b - a)
-            self.robot.send_action(action)
-            time.sleep(1 / hz)
-
     def torque_off(self, joints=None):
         # joints=None means all motors
         self.robot.bus.disable_torque(joints)
