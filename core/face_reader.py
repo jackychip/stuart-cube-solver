@@ -3,6 +3,7 @@ import os
 
 import cv2
 import numpy as np
+import time
 
 # 3x3 sticker centers in "face units", where the face spans 0..3 in both directions
 STICKER_POINTS = []
@@ -148,9 +149,7 @@ def sample_colors(frame, corners, points):
 
 
 def read_face(camera, corners, frames=10):
-    # the camera keeps a few old frames; throw them away so we see the cube as it is now
-    for i in range(5):
-        camera.read()
+    time.sleep(0.2)                  # let the image catch up after the arm stops
 
     points = sample_points(corners)
     all_samples = []
@@ -159,6 +158,7 @@ def read_face(camera, corners, frames=10):
         if frame is None:
             continue
         all_samples.append(sample_colors(frame, corners, points))
+        time.sleep(0.04)             # wait for the next camera frame
 
     if len(all_samples) == 0:
         return None
